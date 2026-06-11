@@ -1,0 +1,8 @@
+services:
+  - type: web
+    name: worldcup-watch-party
+    runtime: docker
+    plan: free
+    envVars:
+      - key: DATABASE_URL
+        sync: false

@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>世界杯群友竞猜</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <div>
+      <p class="eyebrow">Watch Party</p>
+      <h1>世界杯群友竞猜</h1>
+    </div>
+    <button id="refreshBtn" class="icon-btn" title="刷新">↻</button>
+  </header>
+
+  <main class="layout">
+    <section class="panel identity">
+      <label for="nickname">我的昵称</label>
+      <div class="nickname-row">
+        <input id="nickname" maxlength="16" placeholder="输入群昵称">
+        <button id="saveNameBtn">保存</button>
+      </div>
+    </section>
+
+    <section class="panel">
+      <div class="section-title">
+        <h2>今日与明日</h2>
+        <span id="matchCount">0 场</span>
+      </div>
+      <div id="matches" class="match-list"></div>
+    </section>
+
+    <section class="panel">
+      <div class="section-title">
+        <h2>群排行榜</h2>
+        <span>命中比分 +4</span>
+      </div>
+      <div id="leaderboard" class="leaderboard"></div>
+    </section>
+
+    <section class="panel">
+      <div class="section-title">
+        <h2>我的竞猜</h2>
+        <span id="mineCount">0 条</span>
+      </div>
+      <div id="mine" class="mine"></div>
+    </section>
+  </main>
+
+  <template id="matchTemplate">
+    <article class="match-card">
+      <div class="match-head">
+        <span class="stage"></span>
+        <span class="kickoff"></span>
+      </div>
+      <div class="teams">
+        <strong class="home"></strong>
+        <span>vs</span>
+        <strong class="away"></strong>
+      </div>
+      <div class="odds">
+        <div><b class="homeWin"></b><span>主胜</span></div>
+        <div><b class="draw"></b><span>平局</span></div>
+        <div><b class="awayWin"></b><span>客胜</span></div>
+      </div>
+      <p class="analysis"></p>
+      <form class="predict-form">
+        <div class="segmented">
+          <label><input type="radio" name="winner" value="HOME" checked><span>主胜</span></label>
+          <label><input type="radio" name="winner" value="DRAW"><span>平局</span></label>
+          <label><input type="radio" name="winner" value="AWAY"><span>客胜</span></label>
+        </div>
+        <div class="score-row">
+          <input name="homeScore" type="number" min="0" max="20" value="2">
+          <span>:</span>
+          <input name="awayScore" type="number" min="0" max="20" value="1">
+          <button type="submit">提交竞猜</button>
+        </div>
+      </form>
+      <div class="result"></div>
+    </article>
+  </template>
+
+  <div id="toast" class="toast" hidden></div>
+  <script src="/app.js"></script>
+</body>
+</html>
