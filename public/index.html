@@ -3,14 +3,14 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>世界杯群友竞猜</title>
+  <title>球友猜猜</title>
   <link rel="stylesheet" href="/styles.css">
 </head>
 <body>
   <header class="topbar">
     <div>
       <p class="eyebrow">Watch Party</p>
-      <h1>世界杯群友竞猜</h1>
+      <h1>球友猜猜</h1>
     </div>
     <button id="refreshBtn" class="icon-btn" title="刷新">↻</button>
   </header>
@@ -22,11 +22,12 @@
         <input id="nickname" maxlength="16" placeholder="输入群昵称">
         <button id="saveNameBtn">保存</button>
       </div>
+      <p id="liveStatus" class="live-status">数据源加载中</p>
     </section>
 
     <section class="panel">
       <div class="section-title">
-        <h2>今日与明日</h2>
+        <h2>近期比赛</h2>
         <span id="matchCount">0 场</span>
       </div>
       <div id="matches" class="match-list"></div>
@@ -61,11 +62,28 @@
         <strong class="away"></strong>
       </div>
       <div class="odds">
-        <div><b class="homeWin"></b><span>主胜</span></div>
-        <div><b class="draw"></b><span>平局</span></div>
-        <div><b class="awayWin"></b><span>客胜</span></div>
+        <div><b class="homeWin"></b><span>主胜概率</span></div>
+        <div><b class="draw"></b><span>平局概率</span></div>
+        <div><b class="awayWin"></b><span>客胜概率</span></div>
       </div>
       <p class="analysis"></p>
+      <div class="intel">
+        <div class="intel-block">
+          <h3>首发阵容</h3>
+          <div class="lineups"></div>
+        </div>
+        <div class="intel-block">
+          <h3>赔率参考</h3>
+          <div class="bookmaker"></div>
+          <div class="market-grid">
+            <span class="oddsHome"></span>
+            <span class="oddsDraw"></span>
+            <span class="oddsAway"></span>
+          </div>
+          <p class="overUnder"></p>
+          <p class="disclaimer">仅供群友娱乐讨论，不构成投注建议。</p>
+        </div>
+      </div>
       <form class="predict-form">
         <div class="segmented">
           <label><input type="radio" name="winner" value="HOME" checked><span>主胜</span></label>

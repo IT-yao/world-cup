@@ -96,6 +96,12 @@ h2 {
   font-size: 13px;
 }
 
+.live-status {
+  margin-top: 10px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
 .nickname-row {
   display: flex;
   gap: 10px;
@@ -209,6 +215,65 @@ button:hover {
   margin: 12px 0;
   color: #334155;
   line-height: 1.65;
+}
+
+.intel {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin: 12px 0;
+}
+
+.intel-block {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px;
+  background: white;
+}
+
+.intel-block h3 {
+  margin: 0 0 8px;
+  font-size: 14px;
+}
+
+.lineup-grid {
+  display: grid;
+  gap: 8px;
+}
+
+.lineup-grid p,
+.overUnder,
+.disclaimer,
+.muted {
+  margin: 4px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.bookmaker {
+  color: var(--muted);
+  font-size: 12px;
+  margin-bottom: 8px;
+}
+
+.market-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 6px;
+}
+
+.market-grid span {
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 7px 6px;
+  text-align: center;
+  color: var(--ink);
+  font-size: 12px;
+}
+
+.disclaimer {
+  color: var(--danger);
 }
 
 .segmented {
@@ -339,6 +404,10 @@ button:hover {
 
   .teams {
     font-size: 19px;
+  }
+
+  .intel {
+    grid-template-columns: 1fr;
   }
 }
 

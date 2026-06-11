@@ -2,6 +2,7 @@ const state = {
   matches: [],
   leaderboard: [],
   mine: [],
+  live: {},
   nickname: localStorage.getItem("watchPartyName") || ""
 };
 
@@ -18,7 +19,11 @@ $("#saveNameBtn").addEventListener("click", () => {
   showToast("昵称已保存");
 });
 
-$("#refreshBtn").addEventListener("click", loadState);
+$("#refreshBtn").addEventListener("click", async () => {
+  await fetch("/api/sync-live", { method: "POST" });
+  await loadState();
+  showToast("已刷新赛事情报");
+});
 
 async function loadState() {
   const url = `/api/state?nickname=${encodeURIComponent(state.nickname)}`;
@@ -27,13 +32,21 @@ async function loadState() {
   state.matches = data.matches;
   state.leaderboard = data.leaderboard;
   state.mine = data.mine;
+  state.live = data.live || {};
   render();
 }
 
 function render() {
+  renderLiveStatus();
   renderMatches();
   renderLeaderboard();
   renderMine();
+}
+
+function renderLiveStatus() {
+  const provider = state.live.configured ? "API-Football" : "演示数据";
+  const sync = state.live.lastSync ? `，上次同步 ${formatDate(new Date(state.live.lastSync))}` : "";
+  $("#liveStatus").textContent = `数据源：${provider}${sync}`;
 }
 
 function renderMatches() {
@@ -50,14 +63,17 @@ function renderMatches() {
     const mine = state.mine.find((item) => item.matchId === match.id);
 
     card.dataset.matchId = match.id;
-    node.querySelector(".stage").textContent = match.stage;
+    node.querySelector(".stage").textContent = `${match.stage} · ${match.status || "未开始"}`;
     node.querySelector(".kickoff").textContent = `${formatDate(kickoff)} ${locked ? "已锁定" : countdown(kickoff)}`;
     node.querySelector(".home").textContent = match.home;
     node.querySelector(".away").textContent = match.away;
-    node.querySelector(".homeWin").textContent = `${match.homeWin}%`;
-    node.querySelector(".draw").textContent = `${match.draw}%`;
-    node.querySelector(".awayWin").textContent = `${match.awayWin}%`;
+    node.querySelector(".homeWin").textContent = `${match.homeWin || 0}%`;
+    node.querySelector(".draw").textContent = `${match.draw || 0}%`;
+    node.querySelector(".awayWin").textContent = `${match.awayWin || 0}%`;
     node.querySelector(".analysis").textContent = match.analysis;
+
+    renderLineups(node, match);
+    renderOdds(node, match);
 
     const form = node.querySelector(".predict-form");
     if (mine) {
@@ -83,6 +99,37 @@ function renderMatches() {
 
     list.appendChild(node);
   });
+}
+
+function renderLineups(node, match) {
+  const box = node.querySelector(".lineups");
+  if (!match.lineups?.available) {
+    box.innerHTML = `<p class="muted">阵容未公布，通常开赛前约 60 分钟更新。</p>`;
+    return;
+  }
+  box.innerHTML = `
+    <div class="lineup-grid">
+      <div>
+        <strong>${escapeHtml(match.home)} ${escapeHtml(match.lineups.homeFormation || "")}</strong>
+        <p>${escapeHtml((match.lineups.homePlayers || []).slice(0, 11).join("、"))}</p>
+      </div>
+      <div>
+        <strong>${escapeHtml(match.away)} ${escapeHtml(match.lineups.awayFormation || "")}</strong>
+        <p>${escapeHtml((match.lineups.awayPlayers || []).slice(0, 11).join("、"))}</p>
+      </div>
+    </div>
+  `;
+}
+
+function renderOdds(node, match) {
+  const odds = match.odds || {};
+  node.querySelector(".bookmaker").textContent = odds.available
+    ? `${odds.bookmaker || "赔率平台"}${odds.updatedAt ? ` · ${formatDate(new Date(odds.updatedAt))}` : ""}`
+    : "暂无赔率数据";
+  node.querySelector(".oddsHome").textContent = odds.home ? `主胜 ${odds.home}` : "主胜 -";
+  node.querySelector(".oddsDraw").textContent = odds.draw ? `平局 ${odds.draw}` : "平局 -";
+  node.querySelector(".oddsAway").textContent = odds.away ? `客胜 ${odds.away}` : "客胜 -";
+  node.querySelector(".overUnder").textContent = odds.overUnder ? `大小球：${odds.overUnder}` : "大小球：暂无";
 }
 
 async function submitPrediction(event, matchId) {
@@ -148,7 +195,7 @@ function renderMine() {
     const title = match ? `${match.home} vs ${match.away}` : item.matchId;
     return `
       <div class="mine-row">
-        <div>⚽</div>
+        <div>球</div>
         <div>
           <strong>${escapeHtml(title)}</strong>
           <div class="meta">${winnerText(item.winner)}，比分 ${item.homeScore}:${item.awayScore}</div>

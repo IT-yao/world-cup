@@ -1,11 +1,11 @@
-# World Cup Watch Party
+# 球友猜猜
 
-微信群世界杯竞猜 H5：赛程、AI 赛前分析、胜平负/比分竞猜、排行榜、个人竞猜记录。
+微信群世界杯竞猜 H5：近期比赛、真实阵容、赔率参考、胜平负/比分竞猜、排行榜、个人竞猜记录。
 
 ## Local Run
 
 ```powershell
-cd C:\Users\T\Documents\Codex\2026-06-11\new-chat\work\worldcup-watch-party
+cd D:\idea-work\world-cup
 mvn clean package
 java -cp "target/classes;target/dependency/*" WatchPartyServer
 ```
@@ -18,25 +18,49 @@ http://localhost:8080
 
 本地没有 `DATABASE_URL` 时会使用 `data/predictions.tsv` 保存竞猜。
 
+## API-Football Live Data
+
+配置 `FOOTBALL_API_KEY` 后，服务会从 API-Football 同步近期比赛，并尝试获取：
+
+- 真实赛程
+- 比赛状态
+- 首发阵容
+- 胜平负赔率
+- 大小球赔率
+
+阵容通常在开赛前约 60 分钟才公布；赔率仅用于群友娱乐讨论，不构成投注建议。
+
+环境变量：
+
+```text
+FOOTBALL_API_KEY=你的 API-Football key
+FOOTBALL_LEAGUE_ID=1
+FOOTBALL_SEASON=2026
+FOOTBALL_NEXT_MATCHES=6
+LIVE_DATA_REFRESH_MINUTES=15
+APP_ZONE=Asia/Shanghai
+```
+
+没有 `FOOTBALL_API_KEY` 时，应用会继续使用演示数据。
+
 ## Free Deploy: Render + Neon
 
 1. Create a free Neon Postgres project.
-2. Copy the pooled or normal connection string. It should look like:
+2. Copy the connection string:
 
 ```text
 postgresql://user:password@host/database?sslmode=require
 ```
 
-3. Push this folder to GitHub.
-4. In Render, create a new Web Service from the GitHub repository.
+3. Push this repository to GitHub.
+4. In Render, create a Web Service from the GitHub repository.
 5. Render will read `render.yaml` and use the Dockerfile.
-6. Add environment variable:
+6. Add environment variables:
 
 ```text
 DATABASE_URL=你的 Neon Postgres 连接串
+FOOTBALL_API_KEY=你的 API-Football key
 ```
-
-7. Deploy and open the Render URL.
 
 Render sets `PORT` automatically. The app creates the `predictions` table automatically on startup, so `schema.sql` is only for reference.
 
@@ -45,6 +69,8 @@ Render sets `PORT` automatically. The app creates the `predictions` table automa
 - `GET /api/state?nickname=Aqiang`
 - `GET /api/matches`
 - `GET /api/leaderboard`
+- `GET /api/live-status`
+- `POST /api/sync-live`
 - `POST /api/predictions`
 
 Example:
