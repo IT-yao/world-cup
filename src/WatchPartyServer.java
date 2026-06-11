@@ -5,7 +5,9 @@ import java.io.IOException;
 import java.io.OutputStream;
 import java.net.InetSocketAddress;
 import java.net.URI;
+import java.net.URISyntaxException;
 import java.net.URLDecoder;
+import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -441,13 +443,49 @@ public class WatchPartyServer {
 
         private static String toJdbcUrl(String databaseUrl) {
             if (databaseUrl.startsWith("jdbc:postgresql://")) return databaseUrl;
-            if (databaseUrl.startsWith("postgres://")) {
-                return "jdbc:postgresql://" + databaseUrl.substring("postgres://".length());
-            }
-            if (databaseUrl.startsWith("postgresql://")) {
-                return "jdbc:postgresql://" + databaseUrl.substring("postgresql://".length());
+            if (databaseUrl.startsWith("postgres://") || databaseUrl.startsWith("postgresql://")) {
+                try {
+                    URI uri = new URI(databaseUrl);
+                    StringBuilder jdbc = new StringBuilder("jdbc:postgresql://")
+                            .append(uri.getHost());
+                    if (uri.getPort() > 0) {
+                        jdbc.append(':').append(uri.getPort());
+                    }
+                    jdbc.append(uri.getPath());
+
+                    Map<String, String> params = new LinkedHashMap<>();
+                    if (uri.getRawQuery() != null && !uri.getRawQuery().isBlank()) {
+                        for (String pair : uri.getRawQuery().split("&")) {
+                            String[] parts = pair.split("=", 2);
+                            params.put(decode(parts[0]), parts.length > 1 ? decode(parts[1]) : "");
+                        }
+                    }
+                    if (uri.getUserInfo() != null) {
+                        String[] userInfo = uri.getUserInfo().split(":", 2);
+                        params.put("user", decode(userInfo[0]));
+                        if (userInfo.length > 1) {
+                            params.put("password", decode(userInfo[1]));
+                        }
+                    }
+
+                    if (!params.isEmpty()) {
+                        jdbc.append('?');
+                        int index = 0;
+                        for (Map.Entry<String, String> entry : params.entrySet()) {
+                            if (index++ > 0) jdbc.append('&');
+                            jdbc.append(urlEncode(entry.getKey())).append('=').append(urlEncode(entry.getValue()));
+                        }
+                    }
+                    return jdbc.toString();
+                } catch (URISyntaxException ex) {
+                    throw new IllegalArgumentException("Invalid DATABASE_URL", ex);
+                }
             }
             return databaseUrl;
+        }
+
+        private static String urlEncode(String value) {
+            return URLEncoder.encode(value, StandardCharsets.UTF_8).replace("+", "%20");
         }
     }
 
