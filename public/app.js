@@ -129,7 +129,10 @@ function renderOdds(node, match) {
   node.querySelector(".oddsHome").textContent = odds.home ? `主胜 ${odds.home}` : "主胜 -";
   node.querySelector(".oddsDraw").textContent = odds.draw ? `平局 ${odds.draw}` : "平局 -";
   node.querySelector(".oddsAway").textContent = odds.away ? `客胜 ${odds.away}` : "客胜 -";
-  node.querySelector(".overUnder").textContent = odds.overUnder ? `大小球：${odds.overUnder}` : "大小球：暂无";
+  node.querySelector(".supportHome").textContent = odds.supportHome ? `主胜支持 ${odds.supportHome}` : "主胜支持 -";
+  node.querySelector(".supportDraw").textContent = odds.supportDraw ? `平局支持 ${odds.supportDraw}` : "平局支持 -";
+  node.querySelector(".supportAway").textContent = odds.supportAway ? `客胜支持 ${odds.supportAway}` : "客胜支持 -";
+  node.querySelector(".overUnder").textContent = odds.overUnder ? `扩展盘口：${odds.overUnder}` : "扩展盘口：暂无";
 }
 
 async function submitPrediction(event, matchId) {

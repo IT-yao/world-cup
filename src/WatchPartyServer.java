@@ -52,11 +52,13 @@ public class WatchPartyServer {
     private static final ZoneId APP_ZONE = ZoneId.of(System.getenv().getOrDefault("APP_ZONE", "Asia/Shanghai"));
     private static final int LIVE_REFRESH_MINUTES = intEnv("LIVE_DATA_REFRESH_MINUTES", 15);
     private static PredictionStore store;
+    private static SportteryClient sportteryClient;
     private static FootballDataClient footballDataClient;
     private static LocalDateTime lastLiveSync;
 
     public static void main(String[] args) throws Exception {
         store = createStore();
+        sportteryClient = SportteryClient.fromEnv();
         footballDataClient = FootballDataClient.fromEnv();
         seedData();
         refreshLiveDataIfNeeded(true);
@@ -144,8 +146,26 @@ public class WatchPartyServer {
     }
 
     private static void refreshLiveDataIfNeeded(boolean force) {
-        if (footballDataClient == null) return;
+        if (sportteryClient == null && footballDataClient == null) return;
         if (!force && lastLiveSync != null && Duration.between(lastLiveSync, LocalDateTime.now()).toMinutes() < LIVE_REFRESH_MINUTES) {
+            return;
+        }
+        if (sportteryClient != null) {
+            try {
+                List<Match> sportteryMatches = sportteryClient.fetchMatches();
+                if (!sportteryMatches.isEmpty()) {
+                    MATCHES.clear();
+                    MATCHES.addAll(sportteryMatches);
+                    lastLiveSync = LocalDateTime.now();
+                    System.out.println("Synced " + sportteryMatches.size() + " matches from Sporttery.");
+                    return;
+                }
+            } catch (Exception ex) {
+                System.err.println("Failed to sync Sporttery data: " + ex.getMessage());
+            }
+        }
+        if (footballDataClient == null) {
+            lastLiveSync = LocalDateTime.now();
             return;
         }
         try {
@@ -171,8 +191,10 @@ public class WatchPartyServer {
     }
 
     private static String liveStatusJson() {
-        return "{\"provider\":\"" + (footballDataClient == null ? "demo" : "api-football") + "\","
-                + "\"configured\":" + (footballDataClient != null) + ","
+        String provider = sportteryClient != null ? "sporttery" : (footballDataClient == null ? "demo" : "api-football");
+        boolean configured = sportteryClient != null || footballDataClient != null;
+        return "{\"provider\":\"" + provider + "\","
+                + "\"configured\":" + configured + ","
                 + "\"lastSync\":" + (lastLiveSync == null ? "null" : "\"" + lastLiveSync.format(ISO) + "\"")
                 + "}";
     }
@@ -216,6 +238,9 @@ public class WatchPartyServer {
                 + "\"draw\":\"" + escape(match.oddsDraw) + "\","
                 + "\"away\":\"" + escape(match.oddsAway) + "\","
                 + "\"overUnder\":\"" + escape(match.oddsOverUnder) + "\","
+                + "\"supportHome\":\"" + escape(match.supportHome) + "\","
+                + "\"supportDraw\":\"" + escape(match.supportDraw) + "\","
+                + "\"supportAway\":\"" + escape(match.supportAway) + "\","
                 + "\"bookmaker\":\"" + escape(match.oddsBookmaker) + "\","
                 + "\"updatedAt\":\"" + escape(match.oddsUpdatedAt) + "\","
                 + "\"available\":" + match.hasOdds()
@@ -589,6 +614,172 @@ public class WatchPartyServer {
         }
     }
 
+    private static class SportteryClient {
+        private final HttpClient httpClient = HttpClient.newBuilder()
+                .connectTimeout(Duration.ofSeconds(12))
+                .followRedirects(HttpClient.Redirect.NORMAL)
+                .build();
+        private final String baseUrl;
+        private final String channel;
+        private final String poolCode;
+        private final int sportType;
+
+        private SportteryClient(String baseUrl, String channel, String poolCode, int sportType) {
+            this.baseUrl = baseUrl;
+            this.channel = channel;
+            this.poolCode = poolCode;
+            this.sportType = sportType;
+        }
+
+        static SportteryClient fromEnv() {
+            String enabled = env("SPORTTERY_ENABLED", "true");
+            if ("false".equalsIgnoreCase(enabled) || "0".equals(enabled)) return null;
+            return new SportteryClient(
+                    env("SPORTTERY_API_BASE_URL", "https://webapi.sporttery.cn"),
+                    env("SPORTTERY_CHANNEL", "c"),
+                    env("SPORTTERY_POOL_CODE", "had,hhad"),
+                    intEnv("SPORTTERY_SPORT_TYPE", 1));
+        }
+
+        List<Match> fetchMatches() throws Exception {
+            String matchJson = get("/gateway/uniform/football/getMatchCalculatorV1.qry?channel="
+                    + url(channel) + "&poolCode=" + url(poolCode));
+            JsonObject root = GSON.fromJson(matchJson, JsonObject.class);
+            if (root == null || intText(root, "errorCode", -1) != 0) {
+                throw new IOException("Sporttery match API returned error");
+            }
+
+            JsonObject value = object(root, "value");
+            JsonArray groups = value.getAsJsonArray("matchInfoList");
+            List<Match> matches = new ArrayList<>();
+            List<String> matchIds = new ArrayList<>();
+            if (groups == null) return matches;
+
+            for (JsonElement groupElement : groups) {
+                JsonArray subMatches = object(groupElement.getAsJsonObject(), "subMatchList").getAsJsonArray("items");
+                if (subMatches == null) {
+                    subMatches = groupElement.getAsJsonObject().getAsJsonArray("subMatchList");
+                }
+                if (subMatches == null) continue;
+                for (JsonElement matchElement : subMatches) {
+                    JsonObject item = matchElement.getAsJsonObject();
+                    String matchId = text(item, "matchId");
+                    if (matchId.isBlank()) continue;
+                    matchIds.add(matchId);
+
+                    JsonObject had = object(item, "had");
+                    JsonObject hhad = object(item, "hhad");
+                    String home = firstText(item, "homeTeamAllName", "homeTeamAbbName", "主队");
+                    String away = firstText(item, "awayTeamAllName", "awayTeamAbbName", "客队");
+                    String oddsHome = text(had, "h");
+                    String oddsDraw = text(had, "d");
+                    String oddsAway = text(had, "a");
+                    String hhadText = handicapText(hhad);
+                    LocalDateTime kickoff = parseSportteryKickoff(text(item, "matchDate"), text(item, "matchTime"));
+
+                    Match match = new Match(
+                            "sporttery-" + matchId,
+                            matchId,
+                            firstText(item, "leagueAbbName", "leagueAllName", "竞彩足球"),
+                            normalizeSportteryStatus(text(item, "matchStatus")),
+                            home,
+                            away,
+                            kickoff,
+                            0,
+                            0,
+                            0,
+                            "",
+                            null,
+                            null);
+                    match.withOdds(oddsHome, oddsDraw, oddsAway, hhadText, "中国体育彩票", text(value, "lastUpdateTime", LocalDateTime.now().format(ISO)));
+                    match.analysis = analyzeSporttery(match);
+                    matches.add(match);
+                }
+            }
+
+            attachSupportRates(matches, matchIds);
+            for (Match match : matches) {
+                match.analysis = analyzeSporttery(match);
+            }
+            return matches;
+        }
+
+        private void attachSupportRates(List<Match> matches, List<String> matchIds) {
+            if (matchIds.isEmpty()) return;
+            try {
+                String json = get("/gateway/jc/common/getSupportRateV1.qry?matchIds="
+                        + url(String.join(",", matchIds)) + "&poolCode=hhad,had&sportType=" + sportType);
+                JsonObject root = GSON.fromJson(json, JsonObject.class);
+                JsonObject data = root.has("data") && root.get("data").isJsonObject() ? root.getAsJsonObject("data") : object(root, "value");
+                if (data.size() == 0) return;
+                for (Match match : matches) {
+                    if (match.externalId == null) continue;
+                    String key = data.has(match.externalId) ? match.externalId : "_" + match.externalId;
+                    if (!data.has(key)) continue;
+                    JsonObject matchSupport = data.getAsJsonObject(key);
+                    JsonObject support = object(matchSupport, "had");
+                    if (support.size() == 0) support = object(matchSupport, "HAD");
+                    match.supportHome = firstText(support, "pre_win", "hSupportRate", "");
+                    match.supportDraw = firstText(support, "pre_draw", "dSupportRate", "");
+                    match.supportAway = firstText(support, "pre_lose", "aSupportRate", "");
+                }
+            } catch (Exception ex) {
+                System.err.println("Sporttery support rate unavailable: " + ex.getMessage());
+            }
+        }
+
+        private String get(String path) throws Exception {
+            HttpRequest request = HttpRequest.newBuilder(URI.create(baseUrl + path))
+                    .header("Accept", "application/json, text/plain, */*")
+                    .header("Referer", "https://m.sporttery.cn/mjc/jsq/zqspf/")
+                    .header("Origin", "https://m.sporttery.cn")
+                    .header("User-Agent", "Mozilla/5.0 (Linux; Android 13; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Mobile Safari/537.36")
+                    .timeout(Duration.ofSeconds(15))
+                    .GET()
+                    .build();
+            HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
+            if (response.statusCode() < 200 || response.statusCode() >= 300) {
+                throw new IOException("Sporttery returned HTTP " + response.statusCode());
+            }
+            String body = response.body();
+            if (body.contains("WAF") || body.contains("waf-attack-feedback")) {
+                throw new IOException("Sporttery WAF blocked the request");
+            }
+            return body;
+        }
+
+        private String handicapText(JsonObject hhad) {
+            String goalLine = text(hhad, "goalLine");
+            String home = text(hhad, "h");
+            String draw = text(hhad, "d");
+            String away = text(hhad, "a");
+            if (home.isBlank() && draw.isBlank() && away.isBlank()) return "";
+            return "让球(" + (goalLine.isBlank() ? "0" : goalLine) + ") 胜" + home + " / 平" + draw + " / 负" + away;
+        }
+
+        private LocalDateTime parseSportteryKickoff(String date, String time) {
+            try {
+                return LocalDateTime.parse(date + "T" + (time.length() == 5 ? time + ":00" : time));
+            } catch (Exception ex) {
+                return LocalDateTime.now().plusHours(2);
+            }
+        }
+
+        private String normalizeSportteryStatus(String status) {
+            if (status == null || status.isBlank()) return "未开始";
+            return switch (status.toLowerCase(Locale.ROOT)) {
+                case "selling", "presell", "1" -> "销售中";
+                case "sold", "stop", "2" -> "已截止";
+                case "finished", "end", "3" -> "已结束";
+                default -> status;
+            };
+        }
+
+        private String url(String value) {
+            return URLEncoder.encode(value, StandardCharsets.UTF_8);
+        }
+    }
+
     private static class FootballDataClient {
         private final HttpClient httpClient = HttpClient.newHttpClient();
         private final String apiKey;
@@ -781,9 +972,82 @@ public class WatchPartyServer {
         return element == null || element.isJsonNull() ? fallback : element.getAsString();
     }
 
+    private static String firstText(JsonObject object, String first, String second, String fallback) {
+        String value = text(object, first);
+        if (!value.isBlank()) return value;
+        value = text(object, second);
+        return value.isBlank() ? fallback : value;
+    }
+
+    private static int intText(JsonObject object, String name, int fallback) {
+        try {
+            JsonElement element = object == null ? null : object.get(name);
+            if (element == null || element.isJsonNull()) return fallback;
+            return element.getAsInt();
+        } catch (Exception ex) {
+            return fallback;
+        }
+    }
+
     private static Integer intOrNull(JsonObject object, String name) {
         JsonElement element = object == null ? null : object.get(name);
         return element == null || element.isJsonNull() ? null : element.getAsInt();
+    }
+
+    private static String analyzeSporttery(Match match) {
+        String favorite = favoriteLabel(match);
+        StringBuilder analysis = new StringBuilder();
+        if (!favorite.isBlank()) {
+            analysis.append("赔率折算倾向：").append(favorite).append("。");
+        } else {
+            analysis.append("暂未拿到完整胜平负赔率。");
+        }
+
+        String support = supportLabel(match);
+        if (!support.isBlank()) {
+            analysis.append("群体支持率更集中在").append(support).append("，需要注意热度可能不等于真实胜率。");
+        }
+        if (!match.oddsOverUnder.isBlank()) {
+            analysis.append(" 另有").append(match.oddsOverUnder).append("。");
+        }
+        analysis.append(" 数据来自中国体育彩票公开页面，仅供娱乐分析，不构成投注建议。");
+        return analysis.toString();
+    }
+
+    private static String favoriteLabel(Match match) {
+        double home = decimal(match.oddsHome);
+        double draw = decimal(match.oddsDraw);
+        double away = decimal(match.oddsAway);
+        if (home <= 0 || draw <= 0 || away <= 0) return "";
+        if (home <= draw && home <= away) return match.home + "不败/主胜方向";
+        if (away <= home && away <= draw) return match.away + "客胜方向";
+        return "平局防范";
+    }
+
+    private static String supportLabel(Match match) {
+        double home = percent(match.supportHome);
+        double draw = percent(match.supportDraw);
+        double away = percent(match.supportAway);
+        if (home <= 0 && draw <= 0 && away <= 0) return "";
+        if (home >= draw && home >= away) return "主胜(" + match.supportHome + ")";
+        if (away >= home && away >= draw) return "客胜(" + match.supportAway + ")";
+        return "平局(" + match.supportDraw + ")";
+    }
+
+    private static double decimal(String value) {
+        try {
+            return Double.parseDouble(value);
+        } catch (Exception ex) {
+            return 0;
+        }
+    }
+
+    private static double percent(String value) {
+        try {
+            return Double.parseDouble(value.replace("%", ""));
+        } catch (Exception ex) {
+            return 0;
+        }
     }
 
     private static class Match {
@@ -797,7 +1061,7 @@ public class WatchPartyServer {
         private int homeWin;
         private int draw;
         private int awayWin;
-        private final String analysis;
+        private String analysis;
         private final Integer homeScore;
         private final Integer awayScore;
         private String homeFormation = "";
@@ -808,6 +1072,9 @@ public class WatchPartyServer {
         private String oddsDraw = "";
         private String oddsAway = "";
         private String oddsOverUnder = "";
+        private String supportHome = "";
+        private String supportDraw = "";
+        private String supportAway = "";
         private String oddsBookmaker = "";
         private String oddsUpdatedAt = "";
 
@@ -849,7 +1116,8 @@ public class WatchPartyServer {
         }
 
         private boolean hasOdds() {
-            return !oddsHome.isBlank() || !oddsDraw.isBlank() || !oddsAway.isBlank() || !oddsOverUnder.isBlank();
+            return !oddsHome.isBlank() || !oddsDraw.isBlank() || !oddsAway.isBlank()
+                    || !oddsOverUnder.isBlank() || !supportHome.isBlank() || !supportDraw.isBlank() || !supportAway.isBlank();
         }
 
         private boolean finished() {

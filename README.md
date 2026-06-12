@@ -20,7 +20,27 @@ http://localhost:8080
 
 ## API-Football Live Data
 
-配置 `FOOTBALL_API_KEY` 后，服务会从 API-Football 同步近期比赛，并尝试获取：
+默认会优先尝试从中国体育彩票公开页面对应的 Sporttery 接口同步足球胜平负数据：
+
+- 赛场/赛事
+- 开赛时间
+- 胜平负赔率
+- 让球胜平负赔率
+- 竞猜支持率
+- 自动生成赛前分析
+
+相关环境变量：
+
+```text
+SPORTTERY_ENABLED=true
+SPORTTERY_CHANNEL=c
+SPORTTERY_POOL_CODE=had,hhad
+LIVE_DATA_REFRESH_MINUTES=15
+```
+
+如果 Sporttery 接口被 WAF 或网络策略拦截，应用会自动回退到 API-Football 或演示数据。
+
+配置 `FOOTBALL_API_KEY` 后，服务也可以从 API-Football 同步近期比赛，并尝试获取：
 
 - 真实赛程
 - 比赛状态
@@ -59,7 +79,8 @@ postgresql://user:password@host/database?sslmode=require
 
 ```text
 DATABASE_URL=你的 Neon Postgres 连接串
-FOOTBALL_API_KEY=你的 API-Football key
+SPORTTERY_ENABLED=true
+FOOTBALL_API_KEY=你的 API-Football key（可选）
 ```
 
 Render sets `PORT` automatically. The app creates the `predictions` table automatically on startup, so `schema.sql` is only for reference.

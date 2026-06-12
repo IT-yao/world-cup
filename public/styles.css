@@ -257,19 +257,30 @@ button:hover {
   margin-bottom: 8px;
 }
 
-.market-grid {
+.market-grid,
+.support-grid {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
   gap: 6px;
 }
 
-.market-grid span {
+.support-grid {
+  margin-top: 6px;
+}
+
+.market-grid span,
+.support-grid span {
   border: 1px solid var(--line);
   border-radius: 6px;
   padding: 7px 6px;
   text-align: center;
   color: var(--ink);
   font-size: 12px;
+}
+
+.support-grid span {
+  background: #f8fafc;
+  color: var(--muted);
 }
 
 .disclaimer {
