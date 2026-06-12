@@ -55,12 +55,17 @@ public class WatchPartyServer {
     private static SportteryClient sportteryClient;
     private static FootballDataClient footballDataClient;
     private static LocalDateTime lastLiveSync;
+    private static LocalDateTime lastLiveAttempt;
+    private static String lastLiveError = "";
 
     public static void main(String[] args) throws Exception {
         store = createStore();
         sportteryClient = SportteryClient.fromEnv();
         footballDataClient = FootballDataClient.fromEnv();
-        seedData();
+        loadPredictions();
+        if (sportteryClient == null && footballDataClient == null) {
+            seedDemoMatches();
+        }
         refreshLiveDataIfNeeded(true);
 
         String envPort = System.getenv("PORT");
@@ -147,9 +152,11 @@ public class WatchPartyServer {
 
     private static void refreshLiveDataIfNeeded(boolean force) {
         if (sportteryClient == null && footballDataClient == null) return;
-        if (!force && lastLiveSync != null && Duration.between(lastLiveSync, LocalDateTime.now()).toMinutes() < LIVE_REFRESH_MINUTES) {
+        if (!force && lastLiveAttempt != null && Duration.between(lastLiveAttempt, LocalDateTime.now()).toMinutes() < LIVE_REFRESH_MINUTES) {
             return;
         }
+        lastLiveAttempt = LocalDateTime.now();
+        lastLiveError = "";
         if (sportteryClient != null) {
             try {
                 List<Match> sportteryMatches = sportteryClient.fetchMatches();
@@ -160,12 +167,13 @@ public class WatchPartyServer {
                     System.out.println("Synced " + sportteryMatches.size() + " matches from Sporttery.");
                     return;
                 }
+                lastLiveError = "Sporttery returned no matches";
             } catch (Exception ex) {
+                lastLiveError = "Sporttery: " + ex.getMessage();
                 System.err.println("Failed to sync Sporttery data: " + ex.getMessage());
             }
         }
         if (footballDataClient == null) {
-            lastLiveSync = LocalDateTime.now();
             return;
         }
         try {
@@ -175,10 +183,13 @@ public class WatchPartyServer {
                 MATCHES.addAll(liveMatches);
                 lastLiveSync = LocalDateTime.now();
                 System.out.println("Synced " + liveMatches.size() + " football matches from API-Football.");
+                lastLiveError = "";
             }
         } catch (Exception ex) {
+            lastLiveError = lastLiveError.isBlank()
+                    ? "API-Football: " + ex.getMessage()
+                    : lastLiveError + "; API-Football: " + ex.getMessage();
             System.err.println("Failed to sync football data: " + ex.getMessage());
-            lastLiveSync = LocalDateTime.now();
         }
     }
 
@@ -195,7 +206,10 @@ public class WatchPartyServer {
         boolean configured = sportteryClient != null || footballDataClient != null;
         return "{\"provider\":\"" + provider + "\","
                 + "\"configured\":" + configured + ","
+                + "\"usingDemo\":" + (sportteryClient == null && footballDataClient == null) + ","
+                + "\"lastAttempt\":" + (lastLiveAttempt == null ? "null" : "\"" + lastLiveAttempt.format(ISO) + "\"") + ","
                 + "\"lastSync\":" + (lastLiveSync == null ? "null" : "\"" + lastLiveSync.format(ISO) + "\"")
+                + ",\"error\":\"" + escape(lastLiveError) + "\""
                 + "}";
     }
 
@@ -400,7 +414,11 @@ public class WatchPartyServer {
                 .replace("\r", "");
     }
 
-    private static void seedData() {
+    private static void loadPredictions() {
+        PREDICTIONS.addAll(store.load());
+    }
+
+    private static void seedDemoMatches() {
         LocalDateTime now = LocalDateTime.now();
         MATCHES.add(new Match("m0", null, "演示赛", "已结束", "群友队", "熬夜队", now.minusHours(4), 46, 27, 27,
                 "这场是排行榜演示赛：群友队节奏更稳，熬夜队后程体能可能掉线。", 2, 1)
@@ -416,7 +434,6 @@ public class WatchPartyServer {
         MATCHES.add(new Match("m3", null, "小组赛", "未开始", "西班牙", "日本", now.plusDays(1).plusHours(1), 52, 25, 23,
                 "西班牙传控优势明显，日本的高位逼抢和转换速度会让比赛更好看。谨防冷门。", null, null));
 
-        PREDICTIONS.addAll(store.load());
         if (!PREDICTIONS.isEmpty()) return;
         PREDICTIONS.add(new Prediction(UUID.randomUUID().toString(), "阿强", "m0", "HOME", 2, 1, now.minusHours(5)));
         PREDICTIONS.add(new Prediction(UUID.randomUUID().toString(), "小林", "m0", "DRAW", 1, 1, now.minusHours(5)));

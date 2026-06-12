@@ -28,6 +28,7 @@ http://localhost:8080
 - 让球胜平负赔率
 - 竞猜支持率
 - 自动生成赛前分析
+- 胜平负计算器：选择多场结果、倍数、注数、成本和最高预计回报
 
 相关环境变量：
 
@@ -38,7 +39,7 @@ SPORTTERY_POOL_CODE=had,hhad
 LIVE_DATA_REFRESH_MINUTES=15
 ```
 
-如果 Sporttery 接口被 WAF 或网络策略拦截，应用会自动回退到 API-Football 或演示数据。
+如果 Sporttery 接口被 WAF 或网络策略拦截，应用会自动回退到 API-Football；只有两个真实数据源都未配置时，才会使用演示数据。
 
 配置 `FOOTBALL_API_KEY` 后，服务也可以从 API-Football 同步近期比赛，并尝试获取：
 

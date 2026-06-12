@@ -3,7 +3,8 @@ const state = {
   leaderboard: [],
   mine: [],
   live: {},
-  nickname: localStorage.getItem("watchPartyName") || ""
+  nickname: localStorage.getItem("watchPartyName") || "",
+  calc: JSON.parse(localStorage.getItem("watchPartyCalc") || "{}")
 };
 
 const $ = (selector) => document.querySelector(selector);
@@ -22,16 +23,18 @@ $("#saveNameBtn").addEventListener("click", () => {
 $("#refreshBtn").addEventListener("click", async () => {
   await fetch("/api/sync-live", { method: "POST" });
   await loadState();
-  showToast("已刷新赛事情报");
+  showToast("已刷新赛场数据");
 });
+
+$("#calcTimes").addEventListener("input", renderCalculator);
 
 async function loadState() {
   const url = `/api/state?nickname=${encodeURIComponent(state.nickname)}`;
   const response = await fetch(url);
   const data = await response.json();
-  state.matches = data.matches;
-  state.leaderboard = data.leaderboard;
-  state.mine = data.mine;
+  state.matches = data.matches || [];
+  state.leaderboard = data.leaderboard || [];
+  state.mine = data.mine || [];
   state.live = data.live || {};
   render();
 }
@@ -41,12 +44,19 @@ function render() {
   renderMatches();
   renderLeaderboard();
   renderMine();
+  renderCalculator();
 }
 
 function renderLiveStatus() {
-  const provider = state.live.configured ? "API-Football" : "演示数据";
+  const names = {
+    sporttery: "中国体育彩票",
+    "api-football": "API-Football",
+    demo: "演示数据"
+  };
+  const provider = names[state.live.provider] || "未知数据源";
   const sync = state.live.lastSync ? `，上次同步 ${formatDate(new Date(state.live.lastSync))}` : "";
-  $("#liveStatus").textContent = `数据源：${provider}${sync}`;
+  const error = state.live.error ? `，同步异常：${state.live.error}` : "";
+  $("#liveStatus").textContent = `数据源：${provider}${sync}${error}`;
 }
 
 function renderMatches() {
@@ -54,6 +64,11 @@ function renderMatches() {
   const list = $("#matches");
   const template = $("#matchTemplate");
   list.innerHTML = "";
+
+  if (!state.matches.length) {
+    list.innerHTML = `<div class="empty">暂无赛场数据。请点右上角刷新，或检查 Sporttery 数据源是否可访问。</div>`;
+    return;
+  }
 
   state.matches.forEach((match) => {
     const node = template.content.cloneNode(true);
@@ -70,10 +85,11 @@ function renderMatches() {
     node.querySelector(".homeWin").textContent = `${match.homeWin || 0}%`;
     node.querySelector(".draw").textContent = `${match.draw || 0}%`;
     node.querySelector(".awayWin").textContent = `${match.awayWin || 0}%`;
-    node.querySelector(".analysis").textContent = match.analysis;
+    node.querySelector(".analysis").textContent = match.analysis || "暂无分析。";
 
     renderLineups(node, match);
     renderOdds(node, match);
+    bindCalculatorPicks(node, match);
 
     const form = node.querySelector(".predict-form");
     if (mine) {
@@ -124,15 +140,81 @@ function renderLineups(node, match) {
 function renderOdds(node, match) {
   const odds = match.odds || {};
   node.querySelector(".bookmaker").textContent = odds.available
-    ? `${odds.bookmaker || "赔率平台"}${odds.updatedAt ? ` · ${formatDate(new Date(odds.updatedAt))}` : ""}`
-    : "暂无赔率数据";
-  node.querySelector(".oddsHome").textContent = odds.home ? `主胜 ${odds.home}` : "主胜 -";
-  node.querySelector(".oddsDraw").textContent = odds.draw ? `平局 ${odds.draw}` : "平局 -";
-  node.querySelector(".oddsAway").textContent = odds.away ? `客胜 ${odds.away}` : "客胜 -";
+    ? `${odds.bookmaker || "竞彩平台"}${odds.updatedAt ? ` · ${odds.updatedAt}` : ""}`
+    : "暂无竞彩数据";
+  node.querySelector(".oddsHome").textContent = odds.home || "-";
+  node.querySelector(".oddsDraw").textContent = odds.draw || "-";
+  node.querySelector(".oddsAway").textContent = odds.away || "-";
   node.querySelector(".supportHome").textContent = odds.supportHome ? `主胜支持 ${odds.supportHome}` : "主胜支持 -";
   node.querySelector(".supportDraw").textContent = odds.supportDraw ? `平局支持 ${odds.supportDraw}` : "平局支持 -";
   node.querySelector(".supportAway").textContent = odds.supportAway ? `客胜支持 ${odds.supportAway}` : "客胜支持 -";
-  node.querySelector(".overUnder").textContent = odds.overUnder ? `扩展盘口：${odds.overUnder}` : "扩展盘口：暂无";
+  node.querySelector(".overUnder").textContent = odds.overUnder ? `让球胜平负：${odds.overUnder}` : "让球胜平负：暂无";
+}
+
+function bindCalculatorPicks(node, match) {
+  const odds = match.odds || {};
+  const oddsMap = { HOME: odds.home, DRAW: odds.draw, AWAY: odds.away };
+  node.querySelectorAll(".calc-pick").forEach((button) => {
+    const outcome = button.dataset.outcome;
+    const odd = Number(oddsMap[outcome]);
+    const selected = Boolean(state.calc[match.id]?.[outcome]);
+    button.disabled = !odd;
+    button.classList.toggle("selected", selected);
+    button.addEventListener("click", () => {
+      state.calc[match.id] ||= {
+        title: `${match.home} vs ${match.away}`,
+        picks: {}
+      };
+      state.calc[match.id].title = `${match.home} vs ${match.away}`;
+      state.calc[match.id].picks[outcome] = state.calc[match.id].picks[outcome]
+        ? undefined
+        : { label: winnerText(outcome), odd };
+      if (!state.calc[match.id].picks[outcome]) {
+        delete state.calc[match.id].picks[outcome];
+      }
+      if (!Object.keys(state.calc[match.id].picks).length) {
+        delete state.calc[match.id];
+      }
+      localStorage.setItem("watchPartyCalc", JSON.stringify(state.calc));
+      renderMatches();
+      renderCalculator();
+    });
+  });
+}
+
+function renderCalculator() {
+  const times = Math.max(1, Number($("#calcTimes").value) || 1);
+  let pickCount = 0;
+  let tickets = 1;
+  let maxOdd = 1;
+  const rows = [];
+
+  Object.entries(state.calc).forEach(([matchId, entry]) => {
+    const picks = Object.values(entry.picks || {});
+    if (!picks.length) return;
+    pickCount += picks.length;
+    tickets *= picks.length;
+    maxOdd *= Math.max(...picks.map((pick) => Number(pick.odd) || 1));
+    rows.push(`
+      <div class="calc-row">
+        <strong>${escapeHtml(entry.title)}</strong>
+        <span>${picks.map((pick) => `${escapeHtml(pick.label)} ${pick.odd}`).join(" / ")}</span>
+      </div>
+    `);
+  });
+
+  if (!rows.length) {
+    tickets = 0;
+    maxOdd = 0;
+  }
+
+  const cost = tickets * 2 * times;
+  const maxReturn = maxOdd * 2 * times;
+  $("#calcPickCount").textContent = `${pickCount} 项`;
+  $("#calcTickets").textContent = tickets;
+  $("#calcCost").textContent = `${cost.toFixed(0)} 元`;
+  $("#calcReturn").textContent = `${maxReturn.toFixed(2)} 元`;
+  $("#calcSelections").innerHTML = rows.length ? rows.join("") : `<div class="empty">点击任意赛场的主胜/平局/客胜加入计算器</div>`;
 }
 
 async function submitPrediction(event, matchId) {
@@ -210,10 +292,12 @@ function renderMine() {
 }
 
 function formatDate(date) {
+  if (Number.isNaN(date.getTime())) return "";
   return `${String(date.getMonth() + 1).padStart(2, "0")}/${String(date.getDate()).padStart(2, "0")} ${formatTime(date)}`;
 }
 
 function formatTime(date) {
+  if (Number.isNaN(date.getTime())) return "";
   return `${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
 }
 

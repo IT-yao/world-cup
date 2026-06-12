@@ -9,7 +9,7 @@
 <body>
   <header class="topbar">
     <div>
-      <p class="eyebrow">Watch Party</p>
+      <p class="eyebrow">Sporttery Watch Party</p>
       <h1>球友猜猜</h1>
     </div>
     <button id="refreshBtn" class="icon-btn" title="刷新">↻</button>
@@ -25,9 +25,36 @@
       <p id="liveStatus" class="live-status">数据源加载中</p>
     </section>
 
+    <section class="panel calculator-panel">
+      <div class="section-title">
+        <h2>胜平负计算器</h2>
+        <span id="calcPickCount">0 项</span>
+      </div>
+      <div class="calc-grid">
+        <label>
+          倍数
+          <input id="calcTimes" type="number" min="1" max="99" value="1">
+        </label>
+        <div>
+          <span>注数</span>
+          <strong id="calcTickets">0</strong>
+        </div>
+        <div>
+          <span>成本</span>
+          <strong id="calcCost">0 元</strong>
+        </div>
+        <div>
+          <span>最高预计</span>
+          <strong id="calcReturn">0 元</strong>
+        </div>
+      </div>
+      <div id="calcSelections" class="calc-selections"></div>
+      <p class="disclaimer">计算结果按所选场次串关粗算，仅供娱乐分析，不构成投注建议。</p>
+    </section>
+
     <section class="panel">
       <div class="section-title">
-        <h2>近期比赛</h2>
+        <h2>世界杯赛场</h2>
         <span id="matchCount">0 场</span>
       </div>
       <div id="matches" class="match-list"></div>
@@ -61,7 +88,7 @@
         <span>vs</span>
         <strong class="away"></strong>
       </div>
-      <div class="odds">
+      <div class="odds probability-grid">
         <div><b class="homeWin"></b><span>主胜概率</span></div>
         <div><b class="draw"></b><span>平局概率</span></div>
         <div><b class="awayWin"></b><span>客胜概率</span></div>
@@ -69,16 +96,16 @@
       <p class="analysis"></p>
       <div class="intel">
         <div class="intel-block">
-          <h3>首发阵容</h3>
+          <h3>阵容情报</h3>
           <div class="lineups"></div>
         </div>
         <div class="intel-block">
-          <h3>赔率参考</h3>
+          <h3>竞彩数据</h3>
           <div class="bookmaker"></div>
           <div class="market-grid">
-            <span class="oddsHome"></span>
-            <span class="oddsDraw"></span>
-            <span class="oddsAway"></span>
+            <button type="button" class="calc-pick" data-outcome="HOME"><span>主胜</span><b class="oddsHome"></b></button>
+            <button type="button" class="calc-pick" data-outcome="DRAW"><span>平局</span><b class="oddsDraw"></b></button>
+            <button type="button" class="calc-pick" data-outcome="AWAY"><span>客胜</span><b class="oddsAway"></b></button>
           </div>
           <div class="support-grid">
             <span class="supportHome"></span>
@@ -86,7 +113,7 @@
             <span class="supportAway"></span>
           </div>
           <p class="overUnder"></p>
-          <p class="disclaimer">仅供群友娱乐讨论，不构成投注建议。</p>
+          <p class="disclaimer">数据来自中国体育彩票公开页面，仅供群友娱乐讨论。</p>
         </div>
       </div>
       <form class="predict-form">
@@ -99,7 +126,7 @@
           <input name="homeScore" type="number" min="0" max="20" value="2">
           <span>:</span>
           <input name="awayScore" type="number" min="0" max="20" value="1">
-          <button type="submit">提交竞猜</button>
+          <button type="submit">提交群内竞猜</button>
         </div>
       </form>
       <div class="result"></div>
