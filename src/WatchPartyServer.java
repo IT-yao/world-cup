@@ -47,22 +47,28 @@ public class WatchPartyServer {
     private static final DateTimeFormatter ISO = DateTimeFormatter.ISO_LOCAL_DATE_TIME;
     private static final Path PUBLIC_DIR = Path.of("public").toAbsolutePath().normalize();
     private static final Path DATA_FILE = Path.of("data", "predictions.tsv").toAbsolutePath().normalize();
+    private static final Path SPORTTERY_MATCH_CACHE_FILE = Path.of("data", "sporttery-match.json").toAbsolutePath().normalize();
+    private static final Path SPORTTERY_SUPPORT_CACHE_FILE = Path.of("data", "sporttery-support.json").toAbsolutePath().normalize();
     private static final List<Match> MATCHES = new ArrayList<>();
     private static final List<Prediction> PREDICTIONS = new ArrayList<>();
     private static final ZoneId APP_ZONE = ZoneId.of(System.getenv().getOrDefault("APP_ZONE", "Asia/Shanghai"));
     private static final int LIVE_REFRESH_MINUTES = intEnv("LIVE_DATA_REFRESH_MINUTES", 15);
     private static PredictionStore store;
+    private static LiveCacheStore liveCacheStore;
     private static SportteryClient sportteryClient;
     private static FootballDataClient footballDataClient;
+    private static final String ADMIN_TOKEN = System.getenv().getOrDefault("ADMIN_TOKEN", "");
     private static LocalDateTime lastLiveSync;
     private static LocalDateTime lastLiveAttempt;
     private static String lastLiveError = "";
 
     public static void main(String[] args) throws Exception {
         store = createStore();
+        liveCacheStore = createLiveCacheStore();
         sportteryClient = SportteryClient.fromEnv();
         footballDataClient = FootballDataClient.fromEnv();
         loadPredictions();
+        loadCachedSporttery();
         if (sportteryClient == null && footballDataClient == null) {
             seedDemoMatches();
         }
@@ -115,11 +121,55 @@ public class WatchPartyServer {
             sendJson(exchange, 200, liveStatusJson());
             return;
         }
+        if ("POST".equals(method) && "/api/admin/import-sporttery".equals(path)) {
+            importSporttery(exchange);
+            return;
+        }
         if ("POST".equals(method) && "/api/predictions".equals(path)) {
             savePrediction(exchange);
             return;
         }
         sendJson(exchange, 404, "{\"error\":\"Not found\"}");
+    }
+
+    private static void importSporttery(HttpExchange exchange) throws IOException {
+        if (!ADMIN_TOKEN.isBlank()) {
+            String auth = exchange.getRequestHeaders().getFirst("X-Admin-Token");
+            if (!ADMIN_TOKEN.equals(auth)) {
+                sendJson(exchange, 401, "{\"error\":\"invalid admin token\"}");
+                return;
+            }
+        }
+        if (sportteryClient == null) {
+            sportteryClient = SportteryClient.fromEnv();
+        }
+        if (sportteryClient == null) {
+            sportteryClient = SportteryClient.defaultClient();
+        }
+        String body = new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8);
+        try {
+            JsonObject payload = GSON.fromJson(body, JsonObject.class);
+            String matchJson = text(payload, "matchJson");
+            String supportJson = text(payload, "supportJson");
+            if (matchJson.isBlank()) {
+                sendJson(exchange, 400, "{\"error\":\"matchJson is required\"}");
+                return;
+            }
+            List<Match> imported = sportteryClient.parseMatches(matchJson, supportJson);
+            if (imported.isEmpty()) {
+                sendJson(exchange, 400, "{\"error\":\"no matches parsed\"}");
+                return;
+            }
+            MATCHES.clear();
+            MATCHES.addAll(imported);
+            liveCacheStore.saveSporttery(matchJson, supportJson);
+            lastLiveAttempt = LocalDateTime.now();
+            lastLiveSync = LocalDateTime.now();
+            lastLiveError = "";
+            sendJson(exchange, 200, "{\"ok\":true,\"count\":" + imported.size() + "}");
+        } catch (Exception ex) {
+            sendJson(exchange, 400, "{\"error\":\"" + escape(ex.getMessage()) + "\"}");
+        }
     }
 
     private static void savePrediction(HttpExchange exchange) throws IOException {
@@ -163,6 +213,7 @@ public class WatchPartyServer {
                 if (!sportteryMatches.isEmpty()) {
                     MATCHES.clear();
                     MATCHES.addAll(sportteryMatches);
+                    liveCacheStore.saveSporttery(sportteryClient.lastMatchJson, sportteryClient.lastSupportJson);
                     lastLiveSync = LocalDateTime.now();
                     System.out.println("Synced " + sportteryMatches.size() + " matches from Sporttery.");
                     return;
@@ -418,6 +469,23 @@ public class WatchPartyServer {
         PREDICTIONS.addAll(store.load());
     }
 
+    private static void loadCachedSporttery() {
+        if (sportteryClient == null) return;
+        try {
+            SportterySnapshot snapshot = liveCacheStore.loadSporttery();
+            if (snapshot.matchJson == null || snapshot.matchJson.isBlank()) return;
+            List<Match> cached = sportteryClient.parseMatches(snapshot.matchJson, snapshot.supportJson);
+            if (!cached.isEmpty()) {
+                MATCHES.clear();
+                MATCHES.addAll(cached);
+                lastLiveSync = snapshot.updatedAt == null ? LocalDateTime.now() : snapshot.updatedAt;
+                System.out.println("Loaded " + cached.size() + " cached Sporttery matches.");
+            }
+        } catch (Exception ex) {
+            System.err.println("Failed to load cached Sporttery data: " + ex.getMessage());
+        }
+    }
+
     private static void seedDemoMatches() {
         LocalDateTime now = LocalDateTime.now();
         MATCHES.add(new Match("m0", null, "演示赛", "已结束", "群友队", "熬夜队", now.minusHours(4), 46, 27, 27,
@@ -448,6 +516,14 @@ public class WatchPartyServer {
         return new FilePredictionStore();
     }
 
+    private static LiveCacheStore createLiveCacheStore() throws Exception {
+        String databaseUrl = System.getenv("DATABASE_URL");
+        if (databaseUrl != null && !databaseUrl.isBlank()) {
+            return new PostgresLiveCacheStore(databaseUrl);
+        }
+        return new FileLiveCacheStore();
+    }
+
     private static int intEnv(String name, int fallback) {
         try {
             String value = System.getenv(name);
@@ -466,6 +542,112 @@ public class WatchPartyServer {
         List<Prediction> load();
 
         void save(List<Prediction> predictions);
+    }
+
+    private interface LiveCacheStore {
+        SportterySnapshot loadSporttery();
+
+        void saveSporttery(String matchJson, String supportJson);
+    }
+
+    private record SportterySnapshot(String matchJson, String supportJson, LocalDateTime updatedAt) {
+    }
+
+    private static class FileLiveCacheStore implements LiveCacheStore {
+        @Override
+        public SportterySnapshot loadSporttery() {
+            try {
+                if (!Files.exists(SPORTTERY_MATCH_CACHE_FILE)) {
+                    return new SportterySnapshot("", "", null);
+                }
+                String matchJson = Files.readString(SPORTTERY_MATCH_CACHE_FILE, StandardCharsets.UTF_8);
+                String supportJson = Files.exists(SPORTTERY_SUPPORT_CACHE_FILE)
+                        ? Files.readString(SPORTTERY_SUPPORT_CACHE_FILE, StandardCharsets.UTF_8)
+                        : "";
+                return new SportterySnapshot(matchJson, supportJson, LocalDateTime.now());
+            } catch (Exception ex) {
+                System.err.println("Failed to read Sporttery file cache: " + ex.getMessage());
+                return new SportterySnapshot("", "", null);
+            }
+        }
+
+        @Override
+        public void saveSporttery(String matchJson, String supportJson) {
+            try {
+                if (matchJson == null || matchJson.isBlank()) return;
+                Files.createDirectories(SPORTTERY_MATCH_CACHE_FILE.getParent());
+                Files.writeString(SPORTTERY_MATCH_CACHE_FILE, matchJson, StandardCharsets.UTF_8);
+                Files.writeString(SPORTTERY_SUPPORT_CACHE_FILE, supportJson == null ? "" : supportJson, StandardCharsets.UTF_8);
+            } catch (Exception ex) {
+                System.err.println("Failed to write Sporttery file cache: " + ex.getMessage());
+            }
+        }
+    }
+
+    private static class PostgresLiveCacheStore implements LiveCacheStore {
+        private final String jdbcUrl;
+
+        private PostgresLiveCacheStore(String databaseUrl) throws Exception {
+            this.jdbcUrl = PostgresPredictionStore.toJdbcUrl(databaseUrl);
+            try (Connection connection = connect(); Statement statement = connection.createStatement()) {
+                statement.execute("""
+                        create table if not exists app_cache (
+                            cache_key text primary key,
+                            cache_value text not null,
+                            updated_at timestamp not null
+                        )
+                        """);
+            }
+        }
+
+        @Override
+        public SportterySnapshot loadSporttery() {
+            Map<String, String> values = new HashMap<>();
+            LocalDateTime updatedAt = null;
+            try (Connection connection = connect();
+                 PreparedStatement statement = connection.prepareStatement("select cache_key, cache_value, updated_at from app_cache where cache_key in ('sporttery_match', 'sporttery_support')");
+                 ResultSet rows = statement.executeQuery()) {
+                while (rows.next()) {
+                    values.put(rows.getString("cache_key"), rows.getString("cache_value"));
+                    Timestamp timestamp = rows.getTimestamp("updated_at");
+                    if (timestamp != null && (updatedAt == null || timestamp.toLocalDateTime().isAfter(updatedAt))) {
+                        updatedAt = timestamp.toLocalDateTime();
+                    }
+                }
+            } catch (Exception ex) {
+                System.err.println("Failed to read Sporttery Postgres cache: " + ex.getMessage());
+            }
+            return new SportterySnapshot(values.getOrDefault("sporttery_match", ""), values.getOrDefault("sporttery_support", ""), updatedAt);
+        }
+
+        @Override
+        public void saveSporttery(String matchJson, String supportJson) {
+            if (matchJson == null || matchJson.isBlank()) return;
+            saveValue("sporttery_match", matchJson);
+            saveValue("sporttery_support", supportJson == null ? "" : supportJson);
+        }
+
+        private void saveValue(String key, String value) {
+            try (Connection connection = connect();
+                 PreparedStatement statement = connection.prepareStatement("""
+                         insert into app_cache (cache_key, cache_value, updated_at)
+                         values (?, ?, ?)
+                         on conflict (cache_key) do update set
+                             cache_value = excluded.cache_value,
+                             updated_at = excluded.updated_at
+                         """)) {
+                statement.setString(1, key);
+                statement.setString(2, value);
+                statement.setTimestamp(3, Timestamp.valueOf(LocalDateTime.now()));
+                statement.executeUpdate();
+            } catch (Exception ex) {
+                System.err.println("Failed to save Sporttery Postgres cache: " + ex.getMessage());
+            }
+        }
+
+        private Connection connect() throws Exception {
+            return DriverManager.getConnection(jdbcUrl);
+        }
     }
 
     private static class FilePredictionStore implements PredictionStore {
@@ -640,6 +822,8 @@ public class WatchPartyServer {
         private final String channel;
         private final String poolCode;
         private final int sportType;
+        private String lastMatchJson = "";
+        private String lastSupportJson = "";
 
         private SportteryClient(String baseUrl, String channel, String poolCode, int sportType) {
             this.baseUrl = baseUrl;
@@ -651,6 +835,10 @@ public class WatchPartyServer {
         static SportteryClient fromEnv() {
             String enabled = env("SPORTTERY_ENABLED", "true");
             if ("false".equalsIgnoreCase(enabled) || "0".equals(enabled)) return null;
+            return defaultClient();
+        }
+
+        static SportteryClient defaultClient() {
             return new SportteryClient(
                     env("SPORTTERY_API_BASE_URL", "https://webapi.sporttery.cn"),
                     env("SPORTTERY_CHANNEL", "c"),
@@ -658,9 +846,58 @@ public class WatchPartyServer {
                     intEnv("SPORTTERY_SPORT_TYPE", 1));
         }
 
+        List<Match> parseMatches(String matchJson, String supportJson) throws IOException {
+            JsonObject root = GSON.fromJson(matchJson, JsonObject.class);
+            if (root == null || intText(root, "errorCode", -1) != 0) {
+                throw new IOException("Sporttery match API returned error");
+            }
+
+            JsonObject value = object(root, "value");
+            JsonArray groups = value.getAsJsonArray("matchInfoList");
+            List<Match> matches = new ArrayList<>();
+            if (groups == null) return matches;
+
+            for (JsonElement groupElement : groups) {
+                JsonArray subMatches = groupElement.getAsJsonObject().getAsJsonArray("subMatchList");
+                if (subMatches == null) continue;
+                for (JsonElement matchElement : subMatches) {
+                    JsonObject item = matchElement.getAsJsonObject();
+                    String matchId = text(item, "matchId");
+                    if (matchId.isBlank()) continue;
+
+                    JsonObject had = object(item, "had");
+                    JsonObject hhad = object(item, "hhad");
+                    Match match = new Match(
+                            "sporttery-" + matchId,
+                            matchId,
+                            firstText(item, "leagueAbbName", "leagueAllName", "竞彩足球"),
+                            normalizeSportteryStatus(text(item, "matchStatus")),
+                            firstText(item, "homeTeamAllName", "homeTeamAbbName", "主队"),
+                            firstText(item, "awayTeamAllName", "awayTeamAbbName", "客队"),
+                            parseSportteryKickoff(text(item, "matchDate"), text(item, "matchTime")),
+                            0,
+                            0,
+                            0,
+                            "",
+                            null,
+                            null);
+                    match.withOdds(text(had, "h"), text(had, "d"), text(had, "a"), handicapText(hhad),
+                            "中国体育彩票", text(value, "lastUpdateTime", LocalDateTime.now().format(ISO)));
+                    match.analysis = analyzeSporttery(match);
+                    matches.add(match);
+                }
+            }
+            attachSupportRatesFromJson(matches, supportJson);
+            for (Match match : matches) {
+                match.analysis = analyzeSporttery(match);
+            }
+            return matches;
+        }
+
         List<Match> fetchMatches() throws Exception {
             String matchJson = get("/gateway/uniform/football/getMatchCalculatorV1.qry?channel="
                     + url(channel) + "&poolCode=" + url(poolCode));
+            lastMatchJson = matchJson;
             JsonObject root = GSON.fromJson(matchJson, JsonObject.class);
             if (root == null || intText(root, "errorCode", -1) != 0) {
                 throw new IOException("Sporttery match API returned error");
@@ -726,6 +963,16 @@ public class WatchPartyServer {
             try {
                 String json = get("/gateway/jc/common/getSupportRateV1.qry?matchIds="
                         + url(String.join(",", matchIds)) + "&poolCode=hhad,had&sportType=" + sportType);
+                lastSupportJson = json;
+                attachSupportRatesFromJson(matches, json);
+            } catch (Exception ex) {
+                System.err.println("Sporttery support rate unavailable: " + ex.getMessage());
+            }
+        }
+
+        private void attachSupportRatesFromJson(List<Match> matches, String json) {
+            if (json == null || json.isBlank()) return;
+            try {
                 JsonObject root = GSON.fromJson(json, JsonObject.class);
                 JsonObject data = root.has("data") && root.get("data").isJsonObject() ? root.getAsJsonObject("data") : object(root, "value");
                 if (data.size() == 0) return;
@@ -741,7 +988,7 @@ public class WatchPartyServer {
                     match.supportAway = firstText(support, "pre_lose", "aSupportRate", "");
                 }
             } catch (Exception ex) {
-                System.err.println("Sporttery support rate unavailable: " + ex.getMessage());
+                System.err.println("Failed to parse Sporttery support rate: " + ex.getMessage());
             }
         }
 

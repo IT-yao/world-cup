@@ -20,3 +20,5 @@ services:
         value: "c"
       - key: SPORTTERY_POOL_CODE
         value: "had,hhad"
+      - key: ADMIN_TOKEN
+        sync: false

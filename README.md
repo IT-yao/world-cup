@@ -41,6 +41,14 @@ LIVE_DATA_REFRESH_MINUTES=15
 
 如果 Sporttery 接口被 WAF 或网络策略拦截，应用会自动回退到 API-Football；只有两个真实数据源都未配置时，才会使用演示数据。
 
+Render 等云服务器可能会被 Sporttery WAF 拦截。此时可以在本机运行同步脚本，把你本机抓到的官方 JSON 导入线上站点：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\sync-sporttery.ps1 -AppUrl "https://你的站点.onrender.com" -AdminToken "你的 ADMIN_TOKEN"
+```
+
+建议在 Render 配置 `ADMIN_TOKEN`，避免导入接口公开可写。
+
 配置 `FOOTBALL_API_KEY` 后，服务也可以从 API-Football 同步近期比赛，并尝试获取：
 
 - 真实赛程
@@ -82,6 +90,7 @@ postgresql://user:password@host/database?sslmode=require
 DATABASE_URL=你的 Neon Postgres 连接串
 SPORTTERY_ENABLED=true
 FOOTBALL_API_KEY=你的 API-Football key（可选）
+ADMIN_TOKEN=自己生成的一串管理密码
 ```
 
 Render sets `PORT` automatically. The app creates the `predictions` table automatically on startup, so `schema.sql` is only for reference.
@@ -93,6 +102,7 @@ Render sets `PORT` automatically. The app creates the `predictions` table automa
 - `GET /api/leaderboard`
 - `GET /api/live-status`
 - `POST /api/sync-live`
+- `POST /api/admin/import-sporttery`
 - `POST /api/predictions`
 
 Example:
